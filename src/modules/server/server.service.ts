@@ -4,6 +4,8 @@ import * as bufferShim from 'buffer-shims';
 import * as qr from 'qr-image';
 import * as child_process from 'child_process';
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Categories } from '@oznu/hap-client/dist/hap-types';
+
 import { ConfigService } from '../../core/config/config.service';
 import { Logger } from '../../core/logger/logger.service';
 import { ConfigEditorService } from '../config-editor/config-editor.service';
@@ -83,17 +85,133 @@ export class ServerService {
     this.logger.log(`Homebridge Reset: "accessories" directory removed.`);
   }
 
+
+  /**
+   * Return a list of the device pairings in the homebridge persist folder
+   */
+  public async getDevicePairings() {
+    const persistPath = path.join(this.configService.storagePath, 'persist');
+
+    const devices = (await fs.readdir(persistPath))
+      .filter(x => x.match(/AccessoryInfo\.([A-F,a-f,0-9]+)\.json/));
+
+    return Promise.all(devices.map(async (x) => {
+      const device = await fs.readJson(path.join(persistPath, x));
+
+      // filter out some properties
+      delete device.signSk;
+      delete device.signPk;
+      delete device.configHash;
+      delete device.setupID;
+
+      device._id = x.split('.')[1];
+      device._username = device._id.match(/.{1,2}/g).join(':');
+      device._main = this.configService.homebridgeConfig.bridge.username.toUpperCase() === device._username.toUpperCase();
+
+      try {
+        device._category = Object.entries(Categories).find(([name, value]) => value === device.category)[0].toLowerCase();
+      } catch (e) {
+        device._category = 'Other';
+      }
+
+      return device;
+    }));
+  }
+
+  /**
+   * Remove a device pairing
+   */
+  public async deleteDevicePairing(id: string) {
+    const persistPath = path.join(this.configService.storagePath, 'persist');
+
+    const accessoryInfo = path.join(persistPath, 'AccessoryInfo.' + id + '.json');
+    const identifierCache = path.join(persistPath, 'IdentifierCache.' + id + '.json');
+
+    if (await fs.pathExists(accessoryInfo)) {
+      await fs.unlink(accessoryInfo);
+      this.logger.warn(`Removed ${accessoryInfo}`);
+    }
+
+    if (await fs.pathExists(identifierCache)) {
+      await fs.unlink(identifierCache);
+      this.logger.warn(`Removed ${identifierCache}`);
+    }
+
+    return;
+  }
+
+  /**
+   * Returns the cached accessories
+   */
+  public async getCachedAccessories() {
+    const cachedAccessoriesFile = path.join(this.configService.storagePath, 'accessories', 'cachedAccessories');
+
+    if (!await fs.pathExists(cachedAccessoriesFile)) {
+      throw new NotFoundException();
+    }
+
+    return await fs.readJson(cachedAccessoriesFile);
+  }
+
+  /**
+   * Remove a single cached accessory
+   */
+  public async deleteCachedAccessory(uuid: string) {
+    if (!this.configService.serviceMode) {
+      this.logger.error('The reset accessories cache command is only available in service mode');
+      throw new BadRequestException('This command is only available in service mode');
+    }
+
+    const cachedAccessoriesPath = path.resolve(this.configService.storagePath, 'accessories', 'cachedAccessories');
+
+    this.logger.warn(`Sent request to hb-service to remove cached accessory with UUID: ${uuid}`);
+
+    return await new Promise((resolve, reject) => {
+      process.emit('message', 'deleteSingleCachedAccessory', async () => {
+        const cachedAccessories = await this.getCachedAccessories() as Array<any>;
+        const accessoryIndex = cachedAccessories.findIndex(x => x.UUID === uuid);
+
+        if (accessoryIndex > -1) {
+          cachedAccessories.splice(accessoryIndex, 1);
+          await fs.writeJson(cachedAccessoriesPath, cachedAccessories);
+          this.logger.warn(`Removed cached accessory with UUID: ${uuid}`);
+          resolve();
+        } else {
+          this.logger.error(`Cannot find cached accessory with UUID: ${uuid}`);
+          reject();
+        }
+      });
+    });
+  }
+
   /**
    * Clears the Homebridge Accessory Cache
    */
   public async resetCachedAccessories() {
-    if (this.configService.serviceMode) {
-      this.logger.warn('Sent request to clear cached accesories to hb-service');
-      process.emit('message', 'clearCachedAccessories', undefined);
-    } else {
+    if (!this.configService.serviceMode) {
       this.logger.error('The reset accessories cache command is only available in service mode');
       throw new BadRequestException('This command is only available in service mode');
     }
+
+    const cachedAccessoriesPath = path.resolve(this.configService.storagePath, 'accessories', 'cachedAccessories');
+
+    this.logger.warn('Sent request to clear cached accesories to hb-service');
+
+    process.emit('message', 'clearCachedAccessories', async () => {
+      try {
+        if (await fs.pathExists(cachedAccessoriesPath)) {
+          this.logger.log('Clearing Cached Homebridge Accessories...');
+          await fs.unlink(cachedAccessoriesPath);
+          this.logger.warn(`Removed ${cachedAccessoriesPath}`);
+
+        }
+      } catch (e) {
+        this.logger.error(`Failed to clear Homebridge Accessories Cache at ${cachedAccessoriesPath}`);
+        console.error(e);
+      }
+    });
+
+    return;
   }
 
   /**
@@ -106,8 +224,7 @@ export class ServerService {
       throw new NotFoundException();
     }
 
-    const qrImg = qr.svgObject(setupCode, { type: 'svg' });
-    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 23 23"><path d="${qrImg.path}"/></svg>`;
+    return qr.image(setupCode, { type: 'svg' });
   }
 
   /**

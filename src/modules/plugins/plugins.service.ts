@@ -10,6 +10,7 @@ import * as child_process from 'child_process';
 import * as semver from 'semver';
 import * as color from 'bash-color';
 import * as pty from 'node-pty-prebuilt-multiarch';
+import * as NodeCache from 'node-cache';
 
 import { Logger } from '../../core/logger/logger.service';
 import { ConfigService } from '../../core/config/config.service';
@@ -41,6 +42,9 @@ export class PluginsService {
     timeout: 5000,
     httpsAgent: new https.Agent({ keepAlive: true })
   });
+
+  // create a cache for storing plugin package.json from npm
+  private npmPluginCache = new NodeCache({ stdTTL: 300 });
 
   constructor(
     private configService: ConfigService,
@@ -77,8 +81,7 @@ export class PluginsService {
     // filter out non-homebridge plugins by name
     const homebridgePlugins = modules
       .filter(module => (module.name.indexOf('homebridge-') === 0) || this.isScopedPlugin(module.name))
-      .filter(async module => (await fs.pathExists(path.join(module.installPath, 'package.json')).catch(x => null)))
-      .filter(x => x);
+      .filter(module => fs.pathExistsSync(path.join(module.installPath, 'package.json')));
 
     await Promise.all(homebridgePlugins.map(async (pkg) => {
       try {
@@ -462,11 +465,34 @@ export class PluginsService {
     // modify this plugins schema to set the default port number
     if (pluginName === this.configService.name) {
       configSchema.schema.properties.port.default = this.configService.ui.port;
+
+      // filter some options from the UI config when using service mode
+      if (this.configService.serviceMode) {
+        configSchema.layout = configSchema.layout.filter(x => {
+          if (x.ref === 'log') {
+            return false;
+          }
+          return true;
+        });
+
+        const advanced = configSchema.layout.find(x => x.ref === 'advanced');
+        advanced.items = advanced.items.filter(x => {
+          if (x === 'sudo' || x.key === 'restart') {
+            return false;
+          }
+          return true;
+        });
+      }
     }
 
     // modify homebridge-alexa to set the default pin
     if (pluginName === 'homebridge-alexa') {
       configSchema.schema.properties.pin.default = this.configService.homebridgeConfig.bridge.pin;
+    }
+
+    // add the display name from the config.json
+    if (plugin.displayName) {
+      configSchema.displayName = plugin.displayName;
     }
 
     return configSchema;
@@ -543,6 +569,8 @@ export class PluginsService {
               path: requiredPath,
             };
           });
+      } else {
+        return [];
       }
     } catch (e) {
       this.logger.debug(e);
@@ -559,14 +587,18 @@ export class PluginsService {
     for (const requiredPath of this.paths) {
       const modules: string[] = await fs.readdir(requiredPath);
       for (const module of modules) {
-        if (module.charAt(0) === '@') {
-          allModules.push(...await this.getInstalledScopedModules(requiredPath, module));
-        } else {
-          allModules.push({
-            name: module,
-            installPath: path.join(requiredPath, module),
-            path: requiredPath,
-          });
+        try {
+          if (module.charAt(0) === '@') {
+            allModules.push(...await this.getInstalledScopedModules(requiredPath, module));
+          } else {
+            allModules.push({
+              name: module,
+              installPath: path.join(requiredPath, module),
+              path: requiredPath,
+            });
+          }
+        } catch (e) {
+          this.logger.log(`Failed to parse item "${module}" in ${requiredPath}: ${e.message}`);
         }
       }
     }
@@ -636,6 +668,9 @@ export class PluginsService {
       }
     }
 
+    // don't look at homebridge-config-ui-x's own modules
+    paths = paths.filter(x => x !== path.join(process.env.UIX_BASE_PATH, 'node_modules'));
+
     // filter out duplicates and non-existent paths
     return _.uniq(paths).filter((requiredPath) => {
       return fs.existsSync(requiredPath);
@@ -680,9 +715,18 @@ export class PluginsService {
     try {
       if (plugin.name.includes('@')) {
         // scoped plugins do not allow us to access the "latest" tag directly
-        const pkg: INpmRegistryModule = (
-          await this.http.get(`https://registry.npmjs.org/${plugin.name.replace('%40', '@')}`)
-        ).data;
+
+        // attempt to load from cache
+        const fromCache = this.npmPluginCache.get(plugin.name);
+
+        // restore from cache, or load from npm
+        const pkg: INpmRegistryModule = fromCache || (await this.http.get(`https://registry.npmjs.org/${plugin.name.replace('%40', '@')}`)).data;
+
+        // store in cache if it was not there already
+        if (!fromCache) {
+          this.npmPluginCache.set(plugin.name, pkg);
+        }
+
         plugin.publicPackage = true;
         plugin.latestVersion = pkg['dist-tags'] ? pkg['dist-tags'].latest : plugin.installedVersion;
         plugin.updateAvailable = semver.lt(plugin.installedVersion, plugin.latestVersion);
@@ -694,9 +738,18 @@ export class PluginsService {
         plugin.engines = plugin.latestVersion ? pkg.versions[plugin.latestVersion].engines : {};
       } else {
         // access the "latest" tag directly to speed up the request time
-        const pkg: IPackageJson = (
-          await this.http.get(`https://registry.npmjs.org/${encodeURIComponent(plugin.name).replace('%40', '@')}/latest`)
-        ).data;
+
+        // attempt to load from cache
+        const fromCache = this.npmPluginCache.get(plugin.name);
+
+        // restore from cache, or load from npm
+        const pkg: IPackageJson = fromCache || (await this.http.get(`https://registry.npmjs.org/${encodeURIComponent(plugin.name).replace('%40', '@')}/latest`)).data;
+
+        // store in cache if it was not there already
+        if (!fromCache) {
+          this.npmPluginCache.set(plugin.name, pkg);
+        }
+
         plugin.publicPackage = true;
         plugin.latestVersion = pkg.version;
         plugin.updateAvailable = semver.lt(plugin.installedVersion, plugin.latestVersion);
@@ -833,7 +886,10 @@ export class PluginsService {
     try {
       this.verifiedPlugins = (await this.http.get('https://raw.githubusercontent.com/homebridge/verified/master/verified-plugins.json')).data;
     } catch (e) {
-      // do nothing
+      // try again in 60 seconds
+      setTimeout(() => {
+        this.loadVerifiedPluginsList();
+      }, 60000);
     }
   }
 

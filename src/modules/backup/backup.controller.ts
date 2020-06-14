@@ -1,9 +1,12 @@
 import { Controller, Get, Post, Put, UseGuards, Res, Req, InternalServerErrorException } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
+import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { BackupService } from './backup.service';
 import { AdminGuard } from '../../core/auth/guards/admin.guard';
 import { Logger } from '../../core/logger/logger.service';
 
+@ApiTags('Backup & Restore')
+@ApiBearerAuth()
 @UseGuards(AuthGuard())
 @Controller('backup')
 export class BackupController {
@@ -27,9 +30,22 @@ export class BackupController {
 
   @UseGuards(AdminGuard)
   @Post('/restore')
-  restoreBackkup(@Req() req, @Res() res) {
+  restoreBackup(@Req() req, @Res() res) {
     req.multipart(async (field, file, filename, encoding, mimetype) => {
       this.backupService.uploadBackupRestore(file);
+    }, (err) => {
+      if (err) {
+        return res.send(500).send(err.message);
+      }
+      return res.code(200).send();
+    });
+  }
+
+  @UseGuards(AdminGuard)
+  @Post('/restore/hbfx')
+  restoreHbfx(@Req() req, @Res() res) {
+    req.multipart(async (field, file, filename, encoding, mimetype) => {
+      this.backupService.uploadHbfxRestore(file);
     }, (err) => {
       if (err) {
         return res.send(500).send(err.message);

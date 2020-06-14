@@ -15,6 +15,8 @@ import * as tcpPortUsed from 'tcp-port-used';
 import * as si from 'systeminformation';
 import * as semver from 'semver';
 import * as ora from 'ora';
+import * as tar from 'tar';
+import axios from 'axios';
 import { Tail } from 'tail';
 
 import { Win32Installer } from './platforms/win32';
@@ -132,6 +134,10 @@ export class HomebridgeServiceHelper {
         this.tailLogs();
         break;
       }
+      case 'update-node': {
+        this.checkForNodejsUpdates(commander.args.length === 2 ? commander.args[1] : null);
+        break;
+      }
       case 'before-start': {
         // this currently does nothing, but may be used in the future
         process.exit(0);
@@ -150,6 +156,7 @@ export class HomebridgeServiceHelper {
         console.log('    rebuild                          rebuild npm modules (use after updating Node.js)');
         console.log('    run                              run homebridge daemon');
         console.log('    logs                             tails the homebridge service logs');
+        console.log('    update-node [version]            update Node.js');
 
         process.exit(1);
       }
@@ -238,11 +245,35 @@ export class HomebridgeServiceHelper {
    * Trucate the log file to prevent large log files
    */
   private async truncateLog() {
-    const logFile = await (await fs.readFile(this.logPath, 'utf8')).split('\n');
-    if (logFile.length > 5000) {
-      logFile.splice(0, (logFile.length - 5000));
+    if (!await fs.pathExists(this.logPath) || this.stdout) {
+      return;
     }
-    await fs.writeFile(this.logPath, logFile.join('\n'), {});
+
+    const maxSize = 1000000; // ~1 MB
+    const truncateSize = 200000; // ~0.2 MB
+
+    try {
+      const logStats = await fs.stat(this.logPath);
+
+      if (logStats.size < maxSize) {
+        return; // log file does not need truncating
+      }
+
+      // read out the last `truncatedSize` bytes to a buffer
+      const logStartPosition = logStats.size - truncateSize;
+      const logBuffer = Buffer.alloc(truncateSize);
+      const logFileHandle = await fs.open(this.logPath, 'r');
+      await fs.read(logFileHandle, logBuffer, 0, truncateSize, logStartPosition);
+      await fs.close(logFileHandle);
+
+      // truncate the existing file
+      await fs.truncate(this.logPath);
+
+      // re-write the truncated log file
+      this.log.write(logBuffer);
+    } catch (e) {
+      this.logger(`Failed to truncate log file: ${e.message}`, 'fail');
+    }
   }
 
   /**
@@ -308,10 +339,13 @@ export class HomebridgeServiceHelper {
     // start the ui
     this.runUi();
 
-    process.addListener('message', (event) => {
+    process.addListener('message', (event, callback) => {
       switch (event) {
         case 'clearCachedAccessories': {
-          return this.clearHomebridgeCachedAccessories();
+          return this.clearHomebridgeCachedAccessories(callback);
+        }
+        case 'deleteSingleCachedAccessory': {
+          return this.clearHomebridgeCachedAccessories(callback);
         }
         case 'restartHomebridge': {
           return this.restartHomebridge();
@@ -338,7 +372,7 @@ export class HomebridgeServiceHelper {
           this.homebridge.kill('SIGKILL');
         } catch (e) { }
         process.exit(1282);
-      }, 5100);
+      }, 7000);
     };
 
     process.on('SIGTERM', exitHandler);
@@ -548,6 +582,11 @@ export class HomebridgeServiceHelper {
    * Ensures the storage path defined exists
    */
   public async storagePathCheck() {
+    if (os.platform() === 'darwin' && !await fs.pathExists(path.dirname(this.storagePath))) {
+      this.logger(`Cannot create Homebridge storage directory, base path does not exist: ${path.dirname(this.storagePath)}`, 'fail');
+      process.exit(1);
+    }
+
     if (!await fs.pathExists(this.storagePath)) {
       this.logger(`Creating Homebridge directory: ${this.storagePath}`);
       await fs.mkdirp(this.storagePath);
@@ -777,9 +816,17 @@ export class HomebridgeServiceHelper {
       process.exit(1);
     }
 
-    // only print the last 1000 lines
-    const currentLog = (await fs.readFile(this.logPath, 'utf8')).split(os.EOL).slice(-1000).join(os.EOL);
-    process.stdout.write(currentLog);
+    const logStats = await fs.stat(this.logPath);
+    const logStartPosition = logStats.size <= 200000 ? 0 : logStats.size - 200000;
+    const logStream = fs.createReadStream(this.logPath, { start: logStartPosition });
+
+    logStream.on('data', (buffer) => {
+      process.stdout.write(buffer);
+    });
+
+    logStream.on('end', () => {
+      logStream.close();
+    });
 
     const tail = new Tail(this.logPath, {
       fromBeginning: false,
@@ -847,26 +894,12 @@ export class HomebridgeServiceHelper {
   /**
    * Clears the Homebridge Cached Accessories
    */
-  private clearHomebridgeCachedAccessories() {
-    const cachedAccessoriesPath = path.resolve(this.storagePath, 'accessories', 'cachedAccessories');
-
-    const clearAccessoriesCache = () => {
-      try {
-        if (fs.existsSync(cachedAccessoriesPath)) {
-          this.logger('Clearing Cached Homebridge Accessories...');
-          fs.unlinkSync(cachedAccessoriesPath);
-        }
-      } catch (e) {
-        this.logger(`ERROR: Failed to clear Homebridge Accessories Cache at ${cachedAccessoriesPath}`);
-        console.error(e);
-      }
-    };
-
+  private clearHomebridgeCachedAccessories(callback) {
     if (this.homebridge && !this.homebridgeStopped) {
-      this.homebridge.once('close', clearAccessoriesCache);
+      this.homebridge.once('close', callback);
       this.restartHomebridge();
     } else {
-      clearAccessoriesCache();
+      callback();
     }
   }
 
@@ -885,7 +918,7 @@ export class HomebridgeServiceHelper {
             this.homebridge.kill('SIGKILL');
           } catch (e) { }
         }
-      }, 5100);
+      }, 7000);
     }
   }
 
@@ -913,6 +946,97 @@ export class HomebridgeServiceHelper {
       child_process.execSync(`chown -R ${this.uid}:${this.gid} "${this.storagePath}"`);
     } catch (e) {
       // do nothing
+    }
+  }
+
+  /**
+   * Check to see if Node.js version updates are available.
+   * Prefer LTS versions
+   * If current version is > LTS, update to the latest version while retaining the major version number
+   */
+  private async checkForNodejsUpdates(requestedVersion) {
+    const versionList = (await axios.get('https://nodejs.org/dist/index.json')).data;
+    const currentLts = versionList.filter(x => x.lts)[0];
+
+    if (requestedVersion) {
+      const wantedVersion = versionList.find(x => x.version === 'v' + requestedVersion);
+      if (wantedVersion) {
+        this.logger(`Installing Node.js ${wantedVersion.version} over ${process.version}...`, 'info');
+        return this.installer.updateNodejs({
+          target: wantedVersion.version,
+          rebuild: wantedVersion.modules !== process.versions.modules
+        });
+      } else {
+        this.logger(`v${requestedVersion} is not a valid Node.js version.`, 'info');
+        return { update: false };
+      }
+    }
+
+    if (semver.gt(currentLts.version, process.version)) {
+      this.logger(`Updating Node.js from ${process.version} to ${currentLts.version}...`, 'info');
+      return this.installer.updateNodejs({
+        target: currentLts.version,
+        rebuild: currentLts.modules !== process.versions.modules
+      });
+    }
+
+    const currentMajor = semver.parse(process.version).major;
+    const latestVersion = versionList.filter(x => semver.parse(x.version).major === currentMajor)[0];
+
+    if (semver.gt(latestVersion.version, process.version)) {
+      this.logger(`Updating Node.js from ${process.version} to ${latestVersion.version}...`, 'info');
+      return this.installer.updateNodejs({
+        target: latestVersion.version,
+        rebuild: latestVersion.modules !== process.versions.modules
+      });
+    }
+
+    this.logger(`Node.js ${process.version} already up-to-date.`);
+
+    return { update: false };
+  }
+
+  /**
+   * Download the Node.js binary to a temp file
+   */
+  public async downloadNodejs(downloadUrl: string): Promise<string> {
+    const spinner = ora(`Downloading ${downloadUrl}`).start();
+
+    try {
+      const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'node'));
+      const tempFilePath = path.join(tempDir, 'node.tar.gz');
+      const tempFile = fs.createWriteStream(tempFilePath);
+
+      await axios.get(downloadUrl, { responseType: 'stream' })
+        .then((response) => {
+          return new Promise((resolve, reject) => {
+            response.data.pipe(tempFile)
+              .on('finish', () => {
+                return resolve(tempFile);
+              })
+              .on('error', (err) => {
+                return reject(err);
+              });
+          });
+        });
+
+      spinner.succeed('Download complete.');
+      return tempFilePath;
+    } catch (e) {
+      spinner.fail(e.message);
+      process.exit(1);
+    }
+  }
+
+  public async extractNodejs(targetVersion: string, extractConfig) {
+    const spinner = ora(`Installing Node.js ${targetVersion}`).start();
+
+    try {
+      await tar.x(extractConfig);
+      spinner.succeed(`Installed Node.js ${targetVersion}`);
+    } catch (e) {
+      spinner.fail(e.message);
+      process.exit(1);
     }
   }
 

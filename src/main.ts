@@ -8,6 +8,7 @@ import * as fs from 'fs-extra';
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { FastifyAdapter, NestFastifyApplication } from '@nestjs/platform-fastify';
+import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 
 import { AppModule } from './app.module';
 import { Logger } from './core/logger/logger.service';
@@ -82,22 +83,6 @@ async function bootstrap() {
     },
   });
 
-  // login page image
-  app.getHttpAdapter().get('/assets/snapshot.jpg', async (req, res) => {
-    if (configService.ui.loginWallpaper) {
-      if (!await fs.pathExists(configService.ui.loginWallpaper)) {
-        logger.error(`Custom Login Wallpaper does not exist: ${configService.ui.loginWallpaper}`);
-        return res.code(404).send('Not Found');
-      }
-      res.type('image/jpg');
-      res.header('Cache-Control', 'public,max-age=31536000,immutable');
-      res.send(await fs.readFile(path.resolve(configService.ui.loginWallpaper)));
-    } else {
-      res.header('Cache-Control', 'public,max-age=31536000,immutable');
-      res.sendFile('assets/snapshot.jpg');
-    }
-  });
-
   // set prefix
   app.setGlobalPrefix('/api');
 
@@ -112,6 +97,25 @@ async function bootstrap() {
     whitelist: true,
     skipMissingProperties: true,
   }));
+
+  // setup swagger api doc generator
+  const options = new DocumentBuilder()
+    .setTitle('Homebridge Config UI X API Reference')
+    .setVersion(configService.package.version)
+    .addBearerAuth({
+      type: 'oauth2',
+      flows: {
+        password: {
+          tokenUrl: '/api/auth/login',
+          scopes: null
+        }
+      }
+    })
+    .setBasePath('/api')
+    .build();
+
+  const document = SwaggerModule.createDocument(app, options);
+  SwaggerModule.setup('swagger', app, document);
 
   // serve spa on all 404
   app.useGlobalFilters(new SpaFilter());
