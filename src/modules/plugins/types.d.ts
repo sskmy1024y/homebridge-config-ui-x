@@ -19,7 +19,13 @@ export interface HomebridgePlugin {
   engines?: {
     homebridge?: string;
     node?: string;
-  }
+  };
+  funding?: NpmFunding;
+}
+
+export interface HomebridgePluginVersions {
+  tags: Record<string, string>,
+  versions: Array<string>,
 }
 
 export interface IPackageJson {
@@ -34,6 +40,7 @@ export interface IPackageJson {
   author?: string | INpmPerson;
   maintainers?: INpmPerson[];
   contributors?: string[] | INpmPerson[];
+  funding?: NpmFunding;
   files?: string[];
   main?: string;
   bin?: string | { [key: string]: string };
@@ -123,3 +130,5 @@ export interface INpmRegistryModule {
 export interface INpmSearchResults {
   objects: INpmSearchResultItem[];
 }
+
+export type NpmFunding = { type: string, url: string } | string | Array<{ type: string, url: string } | string>;

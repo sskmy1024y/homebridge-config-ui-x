@@ -3,7 +3,7 @@ import * as path from 'path';
 import * as bufferShim from 'buffer-shims';
 import * as qr from 'qr-image';
 import * as child_process from 'child_process';
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, ServiceUnavailableException } from '@nestjs/common';
 import { Categories } from '@oznu/hap-client/dist/hap-types';
 
 import { ConfigService } from '../../core/config/config.service';
@@ -31,13 +31,13 @@ export class ServerService {
   public async restartServer() {
     this.logger.log('Homebridge restart request received');
 
-    if (this.configService.serviceMode && !(await this.configService.uiRestartRequired())) {
+    if (this.configService.serviceMode && !(await this.configService.uiRestartRequired() || await this.nodeVersionChanged())) {
       this.logger.log('UI / Bridge settings have not changed; only restarting Homebridge process');
       // emit restart request to hb-service
       process.emit('message', 'restartHomebridge', undefined);
       // reset the pool of discovered homebridge instances
       this.accessoriesService.resetInstancePool();
-      return { ok: true, command: 'SIGTERM' };
+      return { ok: true, command: 'SIGTERM', restartingUI: false };
     }
 
     setTimeout(() => {
@@ -54,7 +54,7 @@ export class ServerService {
       }
     }, 500);
 
-    return { ok: true, command: this.configService.ui.restart };
+    return { ok: true, command: this.configService.ui.restart, restartingUI: true };
   }
 
   /**
@@ -178,7 +178,7 @@ export class ServerService {
           resolve();
         } else {
           this.logger.error(`Cannot find cached accessory with UUID: ${uuid}`);
-          reject();
+          reject(new NotFoundException());
         }
       });
     });
@@ -274,5 +274,50 @@ export class ServerService {
     }
 
     return 'X-HM://' + encodedPayload + accessoryInfo.setupID;
+  }
+
+  /**
+   * Return the current pairing information for the main bridge
+   */
+  public async getBridgePairingInformation() {
+    if (!await fs.pathExists(this.accessoryInfoPath)) {
+      return new ServiceUnavailableException('Pairing Information Not Available Yet');
+    }
+
+    const accessoryInfo = await fs.readJson(this.accessoryInfoPath);
+
+    return {
+      displayName: accessoryInfo.displayName,
+      pincode: accessoryInfo.pincode,
+      setupCode: await this.getSetupCode(),
+      isPaired: accessoryInfo.pairedClients && Object.keys(accessoryInfo.pairedClients).length > 0,
+    };
+  }
+
+  /**
+   * Check if the system Node.js version has changed
+   */
+  private async nodeVersionChanged(): Promise<boolean> {
+    return new Promise((resolve, reject) => {
+      let result: boolean = false;
+
+      const child = child_process.spawn(process.execPath, ['-v']);
+
+      child.stdout.once('data', (data) => {
+        if (data.toString().trim() === process.version) {
+          result = false;
+        } else {
+          result = true;
+        }
+      });
+
+      child.on('error', () => {
+        result = true;
+      });
+
+      child.on('close', () => {
+        return resolve(result);
+      });
+    });
   }
 }

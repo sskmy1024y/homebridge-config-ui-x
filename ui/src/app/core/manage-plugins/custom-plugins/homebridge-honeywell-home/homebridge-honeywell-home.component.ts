@@ -2,8 +2,10 @@ import { Component, OnInit, OnDestroy, Input } from '@angular/core';
 import { NgbActiveModal } from '@ng-bootstrap/ng-bootstrap';
 import { TranslateService } from '@ngx-translate/core';
 import { ToastrService } from 'ngx-toastr';
-import { ApiService } from '../../../../core/api.service';
-import { AuthService } from '../../../../core/auth/auth.service';
+
+import { ApiService } from '@/app/core/api.service';
+import { AuthService } from '@/app/core/auth/auth.service';
+import { NotificationService } from '@/app/core/notification.service';
 
 @Component({
   selector: 'app-homebridge-honeywell-home',
@@ -12,7 +14,7 @@ import { AuthService } from '../../../../core/auth/auth.service';
 })
 export class HomebridgeHoneywellHomeComponent implements OnInit, OnDestroy {
   private linkDomain = 'https://homebridge-honeywell.iot.oz.nu';
-  private linkUrl = this.linkDomain + '/link-account';
+  public linkUrl = this.linkDomain + '/link-account';
   private popup;
   private originCheckInterval;
   public justLinked = false;
@@ -34,6 +36,7 @@ export class HomebridgeHoneywellHomeComponent implements OnInit, OnDestroy {
     private translate: TranslateService,
     private $api: ApiService,
     public $auth: AuthService,
+    private $notification: NotificationService,
     private $toastr: ToastrService,
   ) {
     // listen for sign in events from the link account popup
@@ -50,11 +53,7 @@ export class HomebridgeHoneywellHomeComponent implements OnInit, OnDestroy {
     if (!this.pluginConfig) {
       this.pluginConfig = {
         platform: this.schema.pluginAlias,
-        name: 'HoneywellHome',
-        options: {
-          ttl: 60,
-          verbose: false,
-        },
+        name: this.schema.pluginAlias,
       };
     }
   }
@@ -78,8 +77,11 @@ export class HomebridgeHoneywellHomeComponent implements OnInit, OnDestroy {
     const h = 700;
     const y = window.top.outerHeight / 2 + window.top.screenY - (h / 2);
     const x = window.top.outerWidth / 2 + window.top.screenX - (w / 2);
+
+    const urlToOpen = this.linkUrl + `?consumerKey=${encodeURIComponent(this.pluginConfig.consumerKey)}&consumerSecret=${encodeURIComponent(this.pluginConfig.consumerSecret)}`;
+
     this.popup = window.open(
-      this.linkUrl, 'oznu-google-smart-home-auth',
+      urlToOpen, 'oznu-google-smart-home-auth',
       'toolbar=no, location=no, directories=no, status=no, menubar=no scrollbars=no, resizable=no, copyhistory=no, ' +
       'width=' + w + ', height=' + h + ', top=' + y + ', left=' + x,
     );
@@ -138,6 +140,7 @@ export class HomebridgeHoneywellHomeComponent implements OnInit, OnDestroy {
 
     await this.saveConfig();
     this.activeModal.close();
+    this.$notification.configUpdated.next();
   }
 
   close() {

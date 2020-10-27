@@ -2,12 +2,14 @@ import { Component, OnInit, OnDestroy } from '@angular/core';
 import { FormBuilder, FormGroup, Validators } from '@angular/forms';
 import { Router, NavigationEnd, ActivatedRoute } from '@angular/router';
 import { TranslateService } from '@ngx-translate/core';
+import { NgbModal } from '@ng-bootstrap/ng-bootstrap';
 import { ToastrService } from 'ngx-toastr';
+import { take } from 'rxjs/operators';
 
-import { AuthService } from '../../../core/auth/auth.service';
-import { ApiService } from '../../../core/api.service';
-import { ManagePluginsService } from '../../../core/manage-plugins/manage-plugins.service';
-
+import { AuthService } from '@/app/core/auth/auth.service';
+import { ApiService } from '@/app/core/api.service';
+import { ManagePluginsService } from '@/app/core/manage-plugins/manage-plugins.service';
+import { DonateModalComponent } from '../donate-modal/donate-modal.component';
 
 @Component({
   selector: 'app-plugins',
@@ -28,6 +30,7 @@ export class InstalledPluginsComponent implements OnInit, OnDestroy {
     private $router: Router,
     private $route: ActivatedRoute,
     public $fb: FormBuilder,
+    private $modal: NgbModal,
     private toastr: ToastrService,
     private translate: TranslateService,
   ) { }
@@ -53,7 +56,7 @@ export class InstalledPluginsComponent implements OnInit, OnDestroy {
     this.loading = true;
     this.$api.get(`/plugins`).subscribe(
       (data: any) => {
-        this.installedPlugins = data.sort(x => !x.update);
+        this.installedPlugins = data;
         this.loading = false;
         this.checkRecentlyInstalled();
       },
@@ -67,14 +70,19 @@ export class InstalledPluginsComponent implements OnInit, OnDestroy {
   }
 
   checkRecentlyInstalled() {
-    this.$route.queryParams.subscribe(async (params) => {
+    this.$route.queryParams.pipe(take(1)).subscribe(async (params) => {
       if (params.installed && this.installedPlugins.find(x => x.name === params.installed && x.settingsSchema)) {
-        this.$plugin.settings(params.installed)
+        this.$plugin.settings(this.installedPlugins.find(x => x.name === params.installed))
           .finally(() => {
             this.$router.navigate(['/plugins']);
           });
       }
     });
+  }
+
+  openFundingModal(plugin) {
+    const ref = this.$modal.open(DonateModalComponent);
+    ref.componentInstance.plugin = plugin;
   }
 
   onClearSearch() {

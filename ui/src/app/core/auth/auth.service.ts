@@ -30,7 +30,7 @@ interface EnvInterface {
   dockerOfflineUpdate: boolean;
   serviceMode: boolean;
   lang: string | null;
-  temperatureUnits: string;
+  temperatureUnits: 'c' | 'f';
   instanceId: string;
   customWallpaperHash: string;
 }
@@ -134,9 +134,10 @@ export class AuthService {
       const timeout = expires.diff(dayjs(), 'millisecond');
       // setTimeout only accepts a 32bit integer, if the number is larger than this, do not timeout
       if (timeout <= 2147483647) {
-        this.logoutTimer = setTimeout(() => {
+        this.logoutTimer = setTimeout(async () => {
           if (this.formAuth === false) {
-            this.noauth();
+            await this.noauth();
+            window.location.reload();
           } else {
             this.logout();
           }
@@ -181,11 +182,17 @@ export class AuthService {
         theme = 'purple';
       }
     }
+
+    const bodySelector = window.document.querySelector('body');
     if (this.theme) {
-      window.document.querySelector('body').classList.remove(`config-ui-x-${this.theme}`);
+      bodySelector.classList.remove(`config-ui-x-${this.theme}`);
+      bodySelector.classList.remove(`dark-mode`);
     }
     this.theme = theme;
-    window.document.querySelector('body').classList.add(`config-ui-x-${this.theme}`);
+    bodySelector.classList.add(`config-ui-x-${this.theme}`);
+    if (this.theme.startsWith('dark-mode')) {
+      bodySelector.classList.add(`dark-mode`);
+    }
   }
 
   setTitle(title: string) {

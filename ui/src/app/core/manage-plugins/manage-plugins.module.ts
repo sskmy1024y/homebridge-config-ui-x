@@ -4,16 +4,19 @@ import { FormsModule, ReactiveFormsModule } from '@angular/forms';
 import { NgbModule } from '@ng-bootstrap/ng-bootstrap';
 import { TranslateModule } from '@ngx-translate/core';
 import { NgxMdModule } from 'ngx-md';
-import { Bootstrap4FrameworkModule } from '@oznu/ngx-bs4-jsonform';
+import { MonacoEditorModule } from 'ngx-monaco-editor';
 
 import { CoreModule } from '../core.module';
 import { InterpolateMdPipe } from './interpolate-md.pipe';
+import { ExternalLinkIconPipe } from './external-link-icon.pipe';
 import { ManagePluginsService } from './manage-plugins.service';
 import { SettingsPluginsModalComponent } from './settings-plugins-modal/settings-plugins-modal.component';
 import { ManagePluginsModalComponent } from './manage-plugins-modal/manage-plugins-modal.component';
 import { CustomPluginsModule } from './custom-plugins/custom-plugins.module';
 import { UninstallPluginsModalComponent } from './uninstall-plugins-modal/uninstall-plugins-modal.component';
 import { NodeUpdateRequiredModalComponent } from './node-update-required-modal/node-update-required-modal.component';
+import { ManualPluginConfigModalComponent } from './manual-plugin-config-modal/manual-plugin-config-modal.component';
+import { SelectPreviousVersionComponent } from './select-previous-version/select-previous-version.component';
 
 @NgModule({
   entryComponents: [
@@ -21,6 +24,8 @@ import { NodeUpdateRequiredModalComponent } from './node-update-required-modal/n
     ManagePluginsModalComponent,
     UninstallPluginsModalComponent,
     NodeUpdateRequiredModalComponent,
+    ManualPluginConfigModalComponent,
+    SelectPreviousVersionComponent,
   ],
   declarations: [
     SettingsPluginsModalComponent,
@@ -28,6 +33,9 @@ import { NodeUpdateRequiredModalComponent } from './node-update-required-modal/n
     UninstallPluginsModalComponent,
     NodeUpdateRequiredModalComponent,
     InterpolateMdPipe,
+    ExternalLinkIconPipe,
+    ManualPluginConfigModalComponent,
+    SelectPreviousVersionComponent,
   ],
   imports: [
     CommonModule,
@@ -36,7 +44,8 @@ import { NodeUpdateRequiredModalComponent } from './node-update-required-modal/n
     TranslateModule.forChild(),
     NgbModule,
     NgxMdModule,
-    Bootstrap4FrameworkModule,
+    MonacoEditorModule,
+    NgbModule,
     CoreModule,
     CustomPluginsModule,
   ],

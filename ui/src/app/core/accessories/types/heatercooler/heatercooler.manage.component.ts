@@ -2,9 +2,8 @@ import { Component, OnInit, Input } from '@angular/core';
 import { NgbActiveModal } from '@ng-bootstrap/ng-bootstrap';
 import { ServiceTypeX } from '../../accessories.interfaces';
 
-import { Subject } from 'rxjs/Subject';
-import 'rxjs/add/operator/debounceTime';
-import 'rxjs/add/operator/distinctUntilChanged';
+import { Subject } from 'rxjs';
+import { debounceTime } from 'rxjs/operators';
 
 @Component({
   selector: 'app-heatercooler-manage',
@@ -28,7 +27,9 @@ export class HeaterCoolerManageComponent implements OnInit {
     public activeModal: NgbActiveModal,
   ) {
     this.targetTemperatureChanged
-      .debounceTime(300)
+      .pipe(
+        debounceTime(300),
+      )
       .subscribe((value) => {
         switch (this.targetMode) {
           case 0:
@@ -67,6 +68,9 @@ export class HeaterCoolerManageComponent implements OnInit {
     if (this.targetMode === 'off') {
       this.service.getCharacteristic('Active').setValue(0);
     } else {
+      if (this.service.getCharacteristic('Active').value === 0) {
+        this.service.getCharacteristic('Active').setValue(1);
+      }
       this.service.getCharacteristic('TargetHeaterCoolerState').setValue(this.targetMode);
     }
 

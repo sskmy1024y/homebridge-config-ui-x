@@ -5,6 +5,7 @@ import { ApiService } from '../../api.service';
 import { HomebridgeGoogleSmarthomeComponent } from './homebridge-google-smarthome/homebridge-google-smarthome.component';
 import { HomebridgeHoneywellHomeComponent } from './homebridge-honeywell-home/homebridge-honeywell-home.component';
 import { HomebridgeRingComponent } from './homebridge-ring/homebridge-ring.component';
+import { HomebridgeNestCamComponent } from './homebridge-nest-cam/homebridge-nest-cam.component';
 
 @Injectable({
   providedIn: 'root',
@@ -14,7 +15,12 @@ export class CustomPluginsService {
   public plugins = {
     'homebridge-gsh': HomebridgeGoogleSmarthomeComponent,
     'homebridge-honeywell-home': HomebridgeHoneywellHomeComponent,
+    'homebridge-honeywell-home-thermostat': HomebridgeHoneywellHomeComponent,
+    'homebridge-honeywell-home-roomsensor-thermostat': HomebridgeHoneywellHomeComponent,
+    'homebridge-honeywell-home-roomsensor': HomebridgeHoneywellHomeComponent,
+    'homebridge-honeywell-leak': HomebridgeHoneywellHomeComponent,
     'homebridge-ring': HomebridgeRingComponent,
+    'homebridge-nest-cam': HomebridgeNestCamComponent,
   };
 
   constructor(
